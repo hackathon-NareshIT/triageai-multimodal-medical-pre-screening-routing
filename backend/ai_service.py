@@ -8,8 +8,6 @@ from pydantic import BaseModel, Field
 class TriageResult(BaseModel):
     urgency_level: str = Field(description="Must be 'Red', 'Yellow', or 'Green'.")
     suggested_specialty: str = Field(description="Medical specialty mapping key.")
-    
-    # NEW: Forcing simple English in the schema
     possible_causes: list[str] = Field(description="2-3 probable causes written in simple, plain English (e.g., 'Heart Attack' instead of 'Myocardial Infarction'). NO MEDICAL JARGON.")
     precautions: list[str] = Field(description="3-5 first-aid steps written so an 8th grader could understand them.")
     watch_out_symptoms: list[str] = Field(description="Severe symptoms for ER escalation, written in plain, patient-friendly English.")
@@ -18,24 +16,26 @@ class TriageResult(BaseModel):
 def analyze_symptoms(image_bytes: bytes | None, mime_type: str | None, text_description: str) -> dict:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     
-    # UPDATE: Start with the text description
-    contents = [text_description]
-    
-    # UPDATE: Only add the image part if data exists
+    # 3. Streamlined Content Building (NO NESTED LISTS)
     if image_bytes and mime_type:
-        image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-        contents.append(image_part)
         prompt_prefix = "Analyze this text description and the attached image of the symptom:"
     else:
         prompt_prefix = "Analyze this text description of a medical symptom (no image available):"
     
     final_prompt = f"{prompt_prefix}\n\nPatient Description: {text_description}"
+    
+    # Start the list with the text prompt
+    api_contents = [final_prompt]
+    
+    # Append the image ONLY if it exists
+    if image_bytes and mime_type:
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+        api_contents.append(image_part)
 
-    # Use contents (which dynamically has image or not) and final_prompt
     try:
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=[contents, final_prompt] if isinstance(contents, list) else [contents, final_prompt], # Handle dynamic list
+            contents=api_contents, # Pass the flat list directly
             config=types.GenerateContentConfig(
                 system_instruction="""
                     You are an expert medical triage assistant speaking directly to everyday patients. 
@@ -56,7 +56,7 @@ def analyze_symptoms(image_bytes: bytes | None, mime_type: str | None, text_desc
         return json.loads(response.text)
         
     except Exception as e:
-        print(f"AI API Error: {e}")
+        print(f"Gemini Engine Error: {str(e)}")
         # Fallback ensures response structure never changes
         return {
             "urgency_level": "Yellow",
